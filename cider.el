@@ -454,6 +454,14 @@ want to inject some middleware only when within a project context.)")
 (cider-add-to-alist 'cider-jack-in-lein-plugins
                     "cider/cider-nrepl" cider-injected-middleware-version)
 
+(defvar cider-jack-in-lein-middlewares nil
+  "List of Leiningen :middleware values to be injected at jack-in.
+
+Necessary for plugins which require an explicit middleware name to be specified.
+
+Can also facilitate using middleware in a specific order.")
+(put 'cider-jack-in-lein-middlewares 'risky-local-variable t)
+
 (defvar cider-jack-in-cljs-lein-plugins nil
   "List of Leiningen plugins to be injected at jack-in.
 Added to `cider-jack-in-lein-plugins' (which see) when doing
@@ -509,6 +517,21 @@ returned by this function only contains strings."
            (car spec)
          spec)))))
 
+
+(defcustom cider-enrich-classpath-p t
+  "Whether to use https://github.com/clojure-emacs/enrich-classpath for adding sources and javadocs to the classpath.
+
+This is done in a clean manner, without interfering with classloaders.
+
+Only available for Leiningen projects at the moment."
+  :type 'boolean
+  :group 'cider
+  :safe #'booleanp)
+
+(when cider-enrich-classpath-p
+  (add-to-list 'cider-jack-in-lein-plugins `("mx.cider/enrich-classpath" "1.4.1"))
+  (add-to-list 'cider-jack-in-lein-middlewares "cider.enrich-classpath/middleware"))
+
 (defun cider--list-as-boot-artifact (list)
   "Return a boot artifact string described by the elements of LIST.
 LIST should have the form (ARTIFACT-NAME ARTIFACT-VERSION).  The returned
@@ -554,10 +577,10 @@ of EXCLUSIONS can be provided as well.  The returned
 string is quoted for passing as argument to an inferior shell."
   (shell-quote-argument (format "[%s %S%s]" (car list) (cadr list) (cider--lein-artifact-exclusions exclusions))))
 
-(defun cider-lein-jack-in-dependencies (global-opts params dependencies dependencies-exclusions lein-plugins)
+(defun cider-lein-jack-in-dependencies (global-opts params dependencies dependencies-exclusions lein-plugins &optional lein-middlewares)
   "Create lein jack-in dependencies.
 Does so by concatenating GLOBAL-OPTS, DEPENDENCIES, with DEPENDENCIES-EXCLUSIONS
-removed, LEIN-PLUGINS, and finally PARAMS."
+removed, LEIN-PLUGINS, LEIN-MIDDLEWARES and finally PARAMS."
   (concat
    global-opts
    (unless (seq-empty-p global-opts) " ")
@@ -570,7 +593,11 @@ removed, LEIN-PLUGINS, and finally PARAMS."
                       (seq-map (lambda (plugin)
                                  (concat "update-in :plugins conj "
                                          (cider--list-as-lein-artifact plugin)))
-                               lein-plugins))
+                               lein-plugins)
+                      (seq-map (lambda (middleware)
+                                 (concat "update-in :middlewares conj "
+                                         middleware))
+                               lein-middlewares))
               " -- ")
    " -- "
    params))
@@ -645,7 +672,8 @@ dependencies."
             (cider-add-clojure-dependencies-maybe
              cider-jack-in-dependencies)
             cider-jack-in-dependencies-exclusions
-            (cider-jack-in-normalized-lein-plugins)))
+            (cider-jack-in-normalized-lein-plugins)
+            cider-jack-in-lein-middlewares))
     ('boot (cider-boot-jack-in-dependencies
             global-opts
             params
